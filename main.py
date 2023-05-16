@@ -2,6 +2,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 import pandas as pd
+import random
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.metrics.pairwise import linear_kernel, cosine_similarity
 #http://127.0.0.1:8000
 
 app = FastAPI(title = "Proyecto_MLOps", description = "proyecto01")
@@ -14,6 +17,7 @@ async def index ():
 
 #Carga de base de datos con las transoformaciones ya realizadas (Ver archivo ETL.ipynb)
 df_movies_trans = pd.read_csv('datasets/movies_transform.csv')
+df_movies = pd.read_csv('datasets/movies_dataset.csv')
 
 df_movies_trans['release_date'] = pd.to_datetime(df_movies_trans['release_date'])
 
@@ -56,12 +60,6 @@ def convert_dia(dia_ingles):
     return dia_espanol
 
 df_movies_trans['day'] = df_movies_trans['day'].apply(convert_dia)
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index ():
-    output = "¡Bienvenido a la interfaz de consultas, usted podrá realizar consulta sobre las peliculas, franquicias, productoras y su inversión! <br>"
-    return output
 
 #Se desarrollan las consutlas que fueron solicitadas por el cliente:
 # CONSULTA 1
@@ -114,7 +112,7 @@ def productoras(productora: str):
     ganancia_total = productora_df['revenue'].sum()
     cantidad = productora_df['revenue'].count()
 
-    return {'productora': productora, 'ganancia_total': ganancia_total, 'cantidad': cantidad}
+    return {'productora': productora, 'ganancia_total': ganancia_total, 'cantidad': int (f'{cantidad}')}
 
 # CONSULTA 6
 @app.get('/retorno/{pelicula}')
@@ -128,3 +126,45 @@ def retorno(pelicula:str):
 
   
     return {'pelicula':pelicula, 'inversion':inversion, 'ganacia':ganancia,'retorno':retorn, 'anio':anio}
+
+# ML
+
+# Obtén la cantidad total de filas del DataFrame original
+total_filas = len(df_movies)
+
+# Calcula la cantidad de filas para el nuevo DataFrame
+filas_nuevo_df = int(total_filas / 5)
+
+# Genera una lista de índices aleatorios sin repetición
+indices_aleatorios = random.sample(range(total_filas), filas_nuevo_df)
+
+# Extrae las filas correspondientes a los índices aleatorios en un nuevo DataFrame
+df_modelo = df_movies.iloc[indices_aleatorios]
+
+# Reinicia los índices del nuevo DataFrame
+df_modelo = df_modelo.reset_index(drop=True)
+
+df_modelo['tagline'] = df_modelo['tagline'].fillna('')
+df_modelo['description'] = df_modelo['overview'] + df_modelo['tagline']
+df_modelo['description'] = df_modelo['description'].fillna('')
+
+tf = TfidfVectorizer(analyzer='word',ngram_range=(1, 2),min_df=0, stop_words='english')
+tfidf_matrix = tf.fit_transform(df_modelo['description'])
+
+cosine_sim = linear_kernel(tfidf_matrix, tfidf_matrix)
+
+df_modelo = df_modelo.reset_index()
+titles = df_modelo['title']
+indices = pd.Series(df_modelo.index, index=df_modelo['title'])
+
+
+
+@app.get('/recomendacion/{titulo}')
+def recommendacion(title):
+    idx = indices[title]
+    sim_scores = list(enumerate(cosine_sim[idx]))
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    sim_scores = sim_scores[1:31]
+    movie_indices = [i[0] for i in sim_scores]
+    cantidad=titles.iloc[movie_indices].head()
+    return  {'lista recomendada': cantidad}
